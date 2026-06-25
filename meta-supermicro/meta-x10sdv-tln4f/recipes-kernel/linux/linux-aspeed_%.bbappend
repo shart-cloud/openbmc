@@ -8,7 +8,8 @@ SRC_URI:append:x10sdv-tln4f = " file://aspeed-bmc-supermicro-x10sdv-tln4f.dts"
 
 do_configure:prepend:x10sdv-tln4f() {
     dtsdir="${S}/arch/arm/boot/dts/aspeed"
-    install -m 0644 "${WORKDIR}/aspeed-bmc-supermicro-x10sdv-tln4f.dts" "${dtsdir}/"
+    # Modern Yocto unpacks file:// SRC_URI into UNPACKDIR, not WORKDIR.
+    install -m 0644 "${UNPACKDIR}/aspeed-bmc-supermicro-x10sdv-tln4f.dts" "${dtsdir}/"
     if ! grep -q "x10sdv-tln4f" "${dtsdir}/Makefile"; then
         echo 'dtb-$(CONFIG_ARCH_ASPEED) += aspeed-bmc-supermicro-x10sdv-tln4f.dtb' >> "${dtsdir}/Makefile"
     fi
