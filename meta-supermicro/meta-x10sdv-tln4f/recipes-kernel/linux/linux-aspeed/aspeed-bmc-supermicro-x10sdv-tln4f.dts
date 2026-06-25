@@ -1,0 +1,213 @@
+// SPDX-License-Identifier: GPL-2.0+
+/*
+ * DRAFT OpenBMC device tree for Supermicro X10SDV-TLN4F (ASPEED AST2400).
+ * Forked from the aspeed-g4 reference style (palmetto). Devices marked
+ * CONFIRMED were recovered from the live board (see ../FEASIBILITY.md);
+ * everything marked PLACEHOLDER / TODO needs the schematic or first-boot
+ * inspection. Compile-test only:  make aspeed-bmc-supermicro-x10sdv-tln4f.dtb
+ */
+
+/dts-v1/;
+
+#include "aspeed-g4.dtsi"
+#include <dt-bindings/gpio/aspeed-gpio.h>
+
+/ {
+	model = "Supermicro X10SDV-TLN4F BMC";
+	compatible = "supermicro,x10sdv-tln4f-bmc", "aspeed,ast2400";
+
+	aliases {
+		serial4 = &uart5;
+	};
+
+	chosen {
+		stdout-path = &uart5;
+		bootargs = "console=ttyS4,115200 earlyprintk";
+	};
+
+	memory@40000000 {
+		/* AST2400 DRAM. Size PLACEHOLDER — OpenBMC u-boot auto-sizes the
+		 * SDRAM controller, so this is informational. Vendor likely 256MB. */
+		reg = <0x40000000 0x10000000>;
+	};
+
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		/* KVM / iKVM video capture engine scratch buffers */
+		video_engine_memory: video {
+			size = <0x02000000>;	/* 32M — tune later */
+			alignment = <0x01000000>;
+			compatible = "shared-dma-pool";
+			reusable;
+		};
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		/* Signals CONFIRMED from MNL-1726; GPIO lines are PLACEHOLDER
+		 * (manual gives header pinouts, not BMC GPIO numbers). */
+
+		heartbeat {	/* BMC Heartbeat LED = LEDM1 (green blink = normal) */
+			label = "bmc:heartbeat";
+			gpios = <&gpio ASPEED_GPIO(R, 0) GPIO_ACTIVE_LOW>;
+		};
+		fault {		/* OH/Fan-Fail/PWR-Fail LED = JF1 pin 8 (red) */
+			label = "bmc:fault";
+			gpios = <&gpio ASPEED_GPIO(R, 1) GPIO_ACTIVE_LOW>;
+		};
+		identify {	/* UID LED = JF1 pin 7 (blue) + rear LED7 */
+			label = "bmc:identify";
+			gpios = <&gpio ASPEED_GPIO(R, 2) GPIO_ACTIVE_HIGH>;
+		};
+	};
+
+	/* iKVM USB keyboard/mouse + virtual media live on the vhub (below). */
+};
+
+/* ---- Boot SPI flash (FMC). 32 MiB. OpenBMC layout, NOT the vendor map. ---- */
+&fmc {
+	status = "okay";
+	flash@0 {
+		status = "okay";
+		m25p,fast-read;
+		label = "bmc";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			u-boot@0      { reg = <0x000000 0x060000>; label = "u-boot"; };
+			u-boot-env@60000 { reg = <0x060000 0x020000>; label = "u-boot-env"; };
+			kernel@80000  { reg = <0x080000 0x400000>; label = "kernel"; };
+			rofs@480000   { reg = <0x480000 0x1b00000>; label = "rofs"; };
+			rwfs@1f80000  { reg = <0x1f80000 0x80000>; label = "rwfs"; };
+		};
+	};
+};
+
+/* ---- Console UART (SoL routed via vuart to host) ---- */
+&uart5 {
+	status = "okay";
+};
+
+&vuart {
+	status = "okay";
+};
+
+/* ---- BMC Ethernet. TLN4F has a dedicated BMC LAN + NC-SI sideband. ---- */
+&mac0 {
+	status = "okay";
+	/* TODO confirm: RMII to a dedicated PHY, or NC-SI sideband to the host
+	 * X552/I350. Vendor used ftgmac (CONFIRMED driver). PHY mode PLACEHOLDER. */
+	use-ncsi;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_rmii1_default>;
+};
+
+/* ---- ADC: 8 rails sensed. Scaling derived in sdr-decoded.txt. ---- */
+&adc {
+	status = "okay";	/* CONFIRMED in use (adc_drv.ko). Vref ~2.5V. */
+	/* Per-channel rail assignment (which iio channel = which rail) is
+	 * PLACEHOLDER — see X10SDV-TLN4F.json ScaleFactors. */
+};
+
+/* ---- Fans: PWM/tach. 4 headers (FAN1-4), 2 populated live. ---- */
+&pwm_tacho {
+	status = "okay";	/* CONFIRMED (ast_pwm_fan.ko). */
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_pwm0_default &pinctrl_pwm1_default
+		     &pinctrl_pwm2_default &pinctrl_pwm3_default>;
+
+	/* PWM channel <-> tach channel mapping PLACEHOLDER (1:1 assumed). */
+	fan@0 { reg = <0x00>; aspeed,fan-tach-ch = /bits/ 8 <0x00>; };
+	fan@1 { reg = <0x01>; aspeed,fan-tach-ch = /bits/ 8 <0x01>; };
+	fan@2 { reg = <0x02>; aspeed,fan-tach-ch = /bits/ 8 <0x02>; };
+	fan@3 { reg = <0x03>; aspeed,fan-tach-ch = /bits/ 8 <0x03>; };
+};
+
+/* ---- I2C4: device pair @0x2c/0x2d. CONFIRMED present (2/2 probes). ---- */
+&i2c4 {
+	status = "okay";
+
+	/* 0x2c / 0x2d — chip identity UNCONFIRMED. Per MNL-1726 the AST2400 is
+	 * the health monitor and voltages come from its ADC, so these are NOT the
+	 * voltage source. Hypothesis: X552 10G SMBus / a temp source (MB_10G Temp).
+	 * Replace compatible once a chip-ID read or schematic confirms. */
+	hwmon@2c {
+		compatible = "nuvoton,nct7904";	/* PLACEHOLDER — verify */
+		reg = <0x2c>;
+	};
+	hwmon@2d {
+		compatible = "nuvoton,nct7904";	/* PLACEHOLDER — verify */
+		reg = <0x2d>;
+	};
+};
+
+/* ---- I2C7: temperature sensor. Real but intermittent (bus contention). ---- */
+&i2c7 {
+	status = "okay";
+
+	/* 0x18 — lm75/tmp75-class. Chip UNCONFIRMED; likely a board temp
+	 * (System / Peripheral / MB_10G). */
+	temperature-sensor@18 {
+		compatible = "national,lm75";	/* PLACEHOLDER — verify (tmp75?) */
+		reg = <0x18>;
+	};
+};
+
+/* ---- Host interface: in-band IPMI over LPC. ----
+ * AST2400 (aspeed-g4) exposes BT (ibt) natively; KCS channels are NOT
+ * predefined in aspeed-g4.dtsi (unlike g5). Every g4 reference board
+ * (palmetto, quanta-q71l) uses BT, so we use it for a known-good first
+ * boot. NOTE: the vendor AMI firmware used KCS (kcs_drv.ko). Revisit on
+ * the bench board: confirm the real host interface + register/IO map from
+ * the schematic, and switch to a KCS node + phosphor-ipmi-kcs if needed. */
+&lpc_ctrl {
+	status = "okay";
+};
+
+&lpc_snoop {
+	status = "okay";
+	snoop-ports = <0x80>;	/* POST code snoop */
+};
+
+&ibt {
+	status = "okay";	/* BMC<->host IPMI BT channel */
+};
+
+/* ---- iKVM: USB vhub (HID + virtual media) + video capture engine ---- */
+&vhub {
+	status = "okay";	/* usb_hid.ko / ikvm_vmass.ko */
+};
+
+&video {
+	status = "okay";	/* video_drv.ko; aspeed-video */
+	memory-region = <&video_engine_memory>;
+};
+
+/* ---- Misc SoC blocks the vendor used ---- */
+&wdt1 {
+	status = "okay";	/* wdt_drv.ko */
+};
+
+&rtc {
+	status = "okay";
+};
+
+&gpio {
+	status = "okay";
+	/* Signal functions CONFIRMED from MNL-1726; AST2400 GPIO line numbers
+	 * are PLACEHOLDER — recover from schematic or live /sys/class/gpio:
+	 *   - Power Button         (JF1)            input
+	 *   - Reset Button         (JF1)            input
+	 *   - Chassis Intrusion    (JL1 pin 2)      input  -> "Chassis Intru" sensor
+	 *   - UID Switch           (JUIDB1 / JF1)   input
+	 *   - Power-good / NMI / PSU presence       input  (TBD)
+	 * SGPIO drive-LED streams on I-SGPIO1/2 (separate sgpio controller). */
+};

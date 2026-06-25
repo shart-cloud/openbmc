@@ -1,0 +1,77 @@
+name: build-x10sdv-tln4f
+
+# Build the Supermicro X10SDV-TLN4F (AST2400) OpenBMC image on the dedicated
+# self-hosted ARC runner (Talos cluster, talos-node) and smoke-boot it in QEMU.
+# sstate + downloads persist on a node-local PVC mounted at /cache, so re-runs
+# are incremental.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ x10sdv-tln4f ]
+    paths:
+      - 'meta-supermicro/meta-x10sdv-tln4f/**'
+      - '.github/workflows/obmc-build.yml'
+
+jobs:
+  build:
+    runs-on: obmc-build-runners
+    timeout-minutes: 600
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Yocto host deps
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            build-essential git python3 python3-pip file wget gawk diffstat \
+            unzip texinfo chrpath socat cpio xz-utils debianutils \
+            iputils-ping locales qemu-system-arm expect zstd lz4 bzip2
+          sudo locale-gen en_US.UTF-8 || true
+
+      - name: Prepare persistent cache (/cache PVC)
+        run: |
+          sudo mkdir -p /cache/sstate /cache/downloads
+          sudo chown -R "$(id -u):$(id -g)" /cache
+          df -h /cache "$GITHUB_WORKSPACE"
+
+      - name: Build obmc-phosphor-image
+        env:
+          LANG: en_US.UTF-8
+        run: |
+          set -eo pipefail
+          # OpenBMC's setup must be SOURCED: it derives TEMPLATECONF from the
+          # machine, inits build/, and leaves us in build/ with bitbake on PATH.
+          . setup x10sdv-tln4f build
+          {
+            echo 'SSTATE_DIR = "/cache/sstate"'
+            echo 'DL_DIR = "/cache/downloads"'
+            echo 'BB_NUMBER_THREADS = "8"'
+            echo 'PARALLEL_MAKE = "-j 8"'
+          } >> conf/local.conf
+          bitbake obmc-phosphor-image
+
+      - name: Locate built image
+        id: img
+        run: |
+          IMG=$(find build/tmp -name 'obmc-phosphor-image-x10sdv-tln4f*.static.mtd' | head -1)
+          if [ -z "$IMG" ]; then echo "no image produced" >&2; exit 1; fi
+          echo "path=$IMG" >> "$GITHUB_OUTPUT"
+          ls -la "$IMG"
+
+      - name: QEMU smoke boot (best-effort)
+        continue-on-error: true
+        run: |
+          expect meta-supermicro/meta-x10sdv-tln4f/ci/qemu-smoke.exp \
+            "${{ steps.img.outputs.path }}" 2>&1 | tee qemu-smoke.log
+
+      - name: Upload image + smoke log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: obmc-x10sdv-tln4f
+          path: |
+            ${{ steps.img.outputs.path }}
+            qemu-smoke.log
+          if-no-files-found: warn

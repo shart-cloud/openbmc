@@ -1,0 +1,45 @@
+#!/usr/bin/env expect
+# QEMU smoke boot for the X10SDV-TLN4F (ASPEED AST2400) OpenBMC image.
+#
+# Milestone 1: prove the image reaches userspace + D-Bus. Boots headless on the
+# closest in-tree QEMU AST2400 model (palmetto-bmc) -- our exact board is not a
+# QEMU machine, so peripherals we wired in the DTS simply won't probe; that is
+# expected and NOT what this checks. Real board wiring is validated on hardware.
+#   usage: qemu-smoke.exp <path-to-image.static.mtd>
+set timeout 700
+set image [lindex $argv 0]
+if {$image eq ""} { puts "usage: qemu-smoke.exp <image.static.mtd>"; exit 2 }
+
+spawn qemu-system-arm -M palmetto-bmc -nographic \
+    -drive file=$image,format=raw,if=mtd \
+    -net nic -net user
+
+# 1. kernel must reach a login prompt without panicking
+expect {
+    "Kernel panic" { puts "\n*** KERNEL PANIC ***"; exit 1 }
+    timeout        { puts "\n*** no login prompt in time ***"; exit 1 }
+    -re {login:}   {}
+}
+
+# 2. login (default OpenBMC creds; allow-root-login image)
+send "root\r"
+expect {
+    "Password:"  { send "0penBmc\r"; exp_continue }
+    -re {\$ |# } {}
+    timeout      { puts "\n*** no shell prompt after login ***"; exit 1 }
+}
+
+# 3. userspace sanity: os-release + D-Bus up
+send "grep PRETTY_NAME /etc/os-release\r"
+expect -re {\$ |# }
+send "busctl --no-pager list >/dev/null 2>&1 && echo DBUS_OK || echo DBUS_FAIL\r"
+expect {
+    "DBUS_FAIL" { puts "\n*** D-Bus not up ***"; exit 1 }
+    "DBUS_OK"   {}
+    timeout     { puts "\n*** D-Bus check timed out ***"; exit 1 }
+}
+expect -re {\$ |# }
+
+puts "\nSMOKE BOOT OK (reached userspace + D-Bus; board wiring NOT tested here)"
+send "\x01x"
+exit 0
