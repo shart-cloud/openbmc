@@ -82,11 +82,15 @@
 			#address-cells = <1>;
 			#size-cells = <1>;
 
+			/* MUST match the FLASH_*_OFFSET layout in x10sdv-tln4f.conf:
+			 * kernel @512KiB, rofs @5248KiB, rwfs @31232KiB, end @32MiB.
+			 * The initramfs mounts rofs/rwfs by these labels, so a
+			 * mismatch panics at boot. Update both together. */
 			u-boot@0      { reg = <0x000000 0x060000>; label = "u-boot"; };
 			u-boot-env@60000 { reg = <0x060000 0x020000>; label = "u-boot-env"; };
-			kernel@80000  { reg = <0x080000 0x400000>; label = "kernel"; };
-			rofs@480000   { reg = <0x480000 0x1b00000>; label = "rofs"; };
-			rwfs@1f80000  { reg = <0x1f80000 0x80000>; label = "rwfs"; };
+			kernel@80000  { reg = <0x080000 0x4a0000>;  label = "kernel"; };
+			rofs@520000   { reg = <0x520000 0x1960000>; label = "rofs"; };
+			rwfs@1e80000  { reg = <0x1e80000 0x180000>; label = "rwfs"; };
 		};
 	};
 };
