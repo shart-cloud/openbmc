@@ -1,0 +1,112 @@
+{
+  "//": "DRAFT entity-manager config for X10SDV-TLN4F (AST2400). Thresholds REAL (live ipmitool). ADC ScaleFactors DERIVED from sdr.bin (M/B/exp) assuming AST2400 ADC Vref=2.5V (confirmed: undivided VCCP full-scale=2.55V) — validate vs iio scale on first boot. Bus/Address (I2C temps) and ADC Index still PLACEHOLDER — fill from --i2c-probe/schematic. See FEASIBILITY.md, sdr-decoded.txt.",
+  "Name": "X10SDV-TLN4F",
+  "Probe": "xyz.openbmc_project.FruDevice({'PRODUCT_PRODUCT_NAME': 'X10SDV-TLN4F'})",
+  "Type": "Board",
+  "Exposes": [
+    {
+      "Name": "CPU Temp",
+      "Type": "XeonCPU",
+      "//": "PECI; Broadwell-DE. Sourced by intel-cpu-sensor, thresholds from DTS/peci. Upper warn 91 / crit 96.",
+      "Thresholds": [
+        {"Direction": "greater than", "Name": "upper non critical", "Severity": 0, "Value": 91},
+        {"Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 96}
+      ]
+    },
+
+    {"Name": "System Temp", "Type": "TMP75", "Bus": 4, "Address": "0x2c", "//": "probe: i2c4 hwmon@0x2c (chip+channel UNCONFIRMED; may be a multi-ch monitor, not tmp75)",
+      "Thresholds": [
+        {"Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": -5},
+        {"Direction": "less than", "Name": "lower non critical", "Severity": 0, "Value": 0},
+        {"Direction": "greater than", "Name": "upper non critical", "Severity": 0, "Value": 80},
+        {"Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 85}
+      ]},
+    {"Name": "Peripheral Temp", "Type": "TMP75", "Bus": 4, "Address": "0x2d", "//": "probe: i2c4 hwmon@0x2d (chip+channel UNCONFIRMED)",
+      "Thresholds": [
+        {"Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": -5},
+        {"Direction": "less than", "Name": "lower non critical", "Severity": 0, "Value": 0},
+        {"Direction": "greater than", "Name": "upper non critical", "Severity": 0, "Value": 80},
+        {"Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 85}
+      ]},
+    {"Name": "MB_10G Temp", "Type": "TMP75", "Bus": 7, "Address": "0x18", "//": "probe: i2c7 temp sensor@0x18 (lm75/tmp75-class; X552 PHY area; UNCONFIRMED)",
+      "Thresholds": [
+        {"Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 0},
+        {"Direction": "greater than", "Name": "upper non critical", "Severity": 0, "Value": 95},
+        {"Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 100}
+      ]},
+
+    {"Name": "FAN2", "Type": "AspeedFan", "//": "Connector Pwm/Tach index PLACEHOLDER",
+      "Connector": {"Name": "FAN2 connector", "Pwm": 1, "Tachs": [1]},
+      "Thresholds": [
+        {"Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 500},
+        {"Direction": "less than", "Name": "lower non critical", "Severity": 0, "Value": 700},
+        {"Direction": "greater than", "Name": "upper non critical", "Severity": 0, "Value": 25400},
+        {"Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 25500}
+      ]},
+    {"Name": "FAN3", "Type": "AspeedFan",
+      "Connector": {"Name": "FAN3 connector", "Pwm": 2, "Tachs": [2]},
+      "Thresholds": [
+        {"Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 500},
+        {"Direction": "less than", "Name": "lower non critical", "Severity": 0, "Value": 700},
+        {"Direction": "greater than", "Name": "upper non critical", "Severity": 0, "Value": 25400},
+        {"Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 25500}
+      ]},
+
+    {"Name": "VCCP", "Type": "ADC", "Index": 0, "ScaleFactor": 1.0, "PowerState": "On", "//": "Index PLACEHOLDER; ScaleFactor 1.0 (undivided rail, derived)",
+      "Thresholds": [
+        {"Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 1.46},
+        {"Direction": "less than", "Name": "lower non critical", "Severity": 0, "Value": 1.57},
+        {"Direction": "greater than", "Name": "upper non critical", "Severity": 0, "Value": 2.02},
+        {"Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 2.13}
+      ]},
+    {"Name": "VDIMM", "Type": "ADC", "Index": 1, "ScaleFactor": 1.0, "PowerState": "On",
+      "Thresholds": [
+        {"Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 0.98},
+        {"Direction": "less than", "Name": "lower non critical", "Severity": 0, "Value": 1.05},
+        {"Direction": "greater than", "Name": "upper non critical", "Severity": 0, "Value": 1.34},
+        {"Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 1.43}
+      ]},
+    {"Name": "12V", "Type": "ADC", "Index": 2, "ScaleFactor": 0.152, "//": "divider ~6.6:1, derived from SDR (Vref 2.5V); Index PLACEHOLDER",
+      "Thresholds": [
+        {"Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 10.27},
+        {"Direction": "less than", "Name": "lower non critical", "Severity": 0, "Value": 10.78},
+        {"Direction": "greater than", "Name": "upper non critical", "Severity": 0, "Value": 12.96},
+        {"Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 13.28}
+      ]},
+    {"Name": "5VCC", "Type": "ADC", "Index": 3, "ScaleFactor": 0.368, "//": "divider ~2.7:1, derived; Index PLACEHOLDER",
+      "Thresholds": [
+        {"Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 4.30},
+        {"Direction": "less than", "Name": "lower non critical", "Severity": 0, "Value": 4.48},
+        {"Direction": "greater than", "Name": "upper non critical", "Severity": 0, "Value": 5.39},
+        {"Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 5.55}
+      ]},
+    {"Name": "3.3VCC", "Type": "ADC", "Index": 4, "ScaleFactor": 0.561, "//": "divider ~1.78:1, derived; Index PLACEHOLDER",
+      "Thresholds": [
+        {"Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 2.82},
+        {"Direction": "less than", "Name": "lower non critical", "Severity": 0, "Value": 2.96},
+        {"Direction": "greater than", "Name": "upper non critical", "Severity": 0, "Value": 3.55},
+        {"Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 3.66}
+      ]},
+    {"Name": "VBAT", "Type": "ADC", "Index": 5, "ScaleFactor": 0.336, "PowerState": "Always", "//": "divider ~3:1, derived; Index PLACEHOLDER",
+      "Thresholds": [
+        {"Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 2.47},
+        {"Direction": "less than", "Name": "lower non critical", "Severity": 0, "Value": 2.59},
+        {"Direction": "greater than", "Name": "upper non critical", "Severity": 0, "Value": 3.49},
+        {"Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 3.57}
+      ]},
+    {"Name": "5V Dual", "Type": "ADC", "Index": 6, "ScaleFactor": 0.363, "PowerState": "Always", "//": "divider ~2.7:1, derived; Index PLACEHOLDER",
+      "Thresholds": [
+        {"Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 4.30},
+        {"Direction": "less than", "Name": "lower non critical", "Severity": 0, "Value": 4.49},
+        {"Direction": "greater than", "Name": "upper non critical", "Severity": 0, "Value": 5.38},
+        {"Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 5.54}
+      ]},
+    {"Name": "3.3V AUX", "Type": "ADC", "Index": 7, "ScaleFactor": 0.566, "PowerState": "Always", "//": "divider ~1.78:1, derived; Index PLACEHOLDER",
+      "Thresholds": [
+        {"Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 2.82},
+        {"Direction": "less than", "Name": "lower non critical", "Severity": 0, "Value": 2.96},
+        {"Direction": "greater than", "Name": "upper non critical", "Severity": 0, "Value": 3.55},
+        {"Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 3.66}
+      ]}
+  ]
+}
