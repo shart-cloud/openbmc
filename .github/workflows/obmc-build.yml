@@ -49,6 +49,12 @@ jobs:
             echo 'DL_DIR = "/cache/downloads"'
             echo 'BB_NUMBER_THREADS = "8"'
             echo 'PARALLEL_MAKE = "-j 8"'
+            # Measurement build: buildhistory gives exact per-package installed
+            # sizes + total image size so we can pick flash-trim candidates
+            # against real numbers instead of guessing. Measurement-only; does
+            # not change the image contents.
+            echo 'INHERIT += "buildhistory"'
+            echo 'BUILDHISTORY_COMMIT = "1"'
           } >> conf/local.conf
           bitbake obmc-phosphor-image
 
@@ -66,7 +72,29 @@ jobs:
           expect meta-supermicro/meta-x10sdv-tln4f/ci/qemu-smoke.exp \
             "${{ steps.img.outputs.path }}" 2>&1 | tee qemu-smoke.log
 
-      - name: Upload image + smoke log
+      - name: Collect buildhistory size report
+        if: always()
+        run: |
+          mkdir -p sizes
+          # Flatten the buildhistory text reports we care about into sizes/,
+          # prefixing each with its image dir so multiple images don't collide.
+          find build/buildhistory/images -type f \
+            \( -name 'installed-package-sizes.txt' \
+               -o -name 'image-info.txt' \
+               -o -name 'files-in-image.txt' \) \
+            -print0 2>/dev/null |
+          while IFS= read -r -d '' f; do
+            tag=$(echo "$f" | sed 's#build/buildhistory/images/##; s#/#__#g')
+            cp "$f" "sizes/$tag"
+          done
+          echo "=== installed-package-sizes (top 50, KiB) ==="
+          find build/buildhistory/images -name 'installed-package-sizes.txt' \
+            -exec cat {} \; 2>/dev/null | head -50 || echo "(none found)"
+          echo "=== image-info (total image size) ==="
+          find build/buildhistory/images -name 'image-info.txt' \
+            -exec cat {} \; 2>/dev/null || echo "(none found)"
+
+      - name: Upload image + smoke log + size report
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -74,4 +102,5 @@ jobs:
           path: |
             ${{ steps.img.outputs.path }}
             qemu-smoke.log
+            sizes/
           if-no-files-found: warn
