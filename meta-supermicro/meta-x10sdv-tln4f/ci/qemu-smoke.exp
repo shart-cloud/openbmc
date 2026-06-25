@@ -16,9 +16,19 @@
 #   instantiation is a bench-board check. We also dump diagnostics for the two
 #   M1 boot warnings (State.Host duplicate, bmcweb StateDirectory).
 #   usage: qemu-smoke.exp <path-to-image.static.mtd>
+#
+# Two serial-console robustness measures, both learned the hard way:
+#   * send -s + send_slow: the AST2400 console intermittently DOUBLES typed
+#     characters, which silently corrupts long commands (a doubled char inside a
+#     unit name makes systemctl miss it). Typing one char at a time avoids it.
+#   * result tokens are split with '' (e.g. E''M_ACTIVE) so the literal token
+#     ("EM_ACTIVE") appears only in the command's OUTPUT, never in the shell's
+#     echo of the command line -- otherwise expect matches the echoed command
+#     instead of the real result.
 set timeout 700
 set image [lindex $argv 0]
 if {$image eq ""} { puts "usage: qemu-smoke.exp <image.static.mtd>"; exit 2 }
+set send_slow {1 .05}
 
 spawn qemu-system-arm -M palmetto-bmc -nographic \
     -drive file=$image,format=raw,if=mtd \
@@ -32,15 +42,15 @@ expect {
 }
 
 # 2. login (default OpenBMC creds; allow-root-login image)
-send "root\r"
+send -s "root\r"
 expect {
-    "Password:"  { send "0penBmc\r"; exp_continue }
+    "Password:"  { send -s "0penBmc\r"; exp_continue }
     -re {\$ |# } {}
     timeout      { puts "\n*** no shell prompt after login ***"; exit 1 }
 }
 
-# 3. userspace sanity: D-Bus up
-send "busctl --no-pager list >/dev/null 2>&1 && echo DBUS_OK || echo DBUS_FAIL\r"
+# 3. HARD: userspace sanity -- D-Bus up
+send -s "busctl --no-pager list >/dev/null 2>&1 && echo D''BUS_OK || echo D''BUS_FAIL\r"
 expect {
     "DBUS_FAIL" { puts "\n*** D-Bus not up ***"; exit 1 }
     "DBUS_OK"   {}
@@ -48,54 +58,55 @@ expect {
 }
 expect -re {\$ |# }
 
-# 4. HARD: entity-manager service active (acceptance criterion 3)
-send "systemctl is-active xyz.openbmc_project.EntityManager.service >/dev/null 2>&1 && echo EM_ACTIVE || echo EM_INACTIVE\r"
+# 4. HARD (verdict deferred until after diagnostics): entity-manager active
+set em_ok 0
+send -s "systemctl is-active xyz.openbmc_project.EntityManager.service >/dev/null 2>&1 && echo E''M_ACTIVE || echo E''M_INACTIVE\r"
 expect {
-    "EM_INACTIVE" { puts "\n*** entity-manager service not active ***"; exit 1 }
-    "EM_ACTIVE"   {}
-    timeout       { puts "\n*** entity-manager active check timed out ***"; exit 1 }
+    "EM_ACTIVE"   { set em_ok 1 }
+    "EM_INACTIVE" { set em_ok 0 }
+    timeout       { set em_ok 0 }
 }
 expect -re {\$ |# }
 
-# 5. HARD: our config installed (acceptance criterion 3)
-send "test -f /usr/share/entity-manager/configurations/X10SDV-TLN4F.json && echo CFG_PRESENT || echo CFG_MISSING\r"
+# 5. HARD (verdict deferred): our config installed
+set cfg_ok 0
+send -s "test -f /usr/share/entity-manager/configurations/X10SDV-TLN4F.json && echo C''FG_PRESENT || echo C''FG_MISSING\r"
 expect {
-    "CFG_MISSING" { puts "\n*** X10SDV-TLN4F.json not installed ***"; exit 1 }
-    "CFG_PRESENT" {}
-    timeout       { puts "\n*** config-present check timed out ***"; exit 1 }
+    "CFG_PRESENT" { set cfg_ok 1 }
+    "CFG_MISSING" { set cfg_ok 0 }
+    timeout       { set cfg_ok 0 }
 }
 expect -re {\$ |# }
+
+# --- diagnostics: always run (even if a hard check above missed), never fatal ---
+proc diag {cmd} { send -s "$cmd\r"; expect -re {\$ |# } }
 
 # 6. SOFT: did entity-manager instantiate an X10SDV board object? Expected ABSENT
-#    under palmetto-bmc (no FRU EEPROM to match the probe). Logged, never fatal.
+#    under palmetto-bmc (no FRU EEPROM to match the probe).
 puts "\n--- DIAG: entity-manager board object (absence expected under QEMU, no FRU) ---"
-send "busctl tree xyz.openbmc_project.EntityManager 2>/dev/null | grep -i x10sdv || echo NO_X10SDV_OBJECT_UNDER_QEMU\r"
-expect -re {\$ |# }
-send "echo CONFIGS:; ls /usr/share/entity-manager/configurations/\r"
-expect -re {\$ |# }
+diag "busctl tree xyz.openbmc_project.EntityManager 2>/dev/null | grep -i x10sdv || echo NO_X10SDV_OBJECT_UNDER_QEMU"
+diag "echo CONFIGS:; ls /usr/share/entity-manager/configurations/"
 
 # 7. SOFT DIAG: chase the M1 'State.Host@0: Two services for same bus name'
-#    warning -- enumerate every unit file that claims a State.Host bus name so
-#    the boot log names the duplicate's two providers.
+#    warning -- name every unit that claims a State.Host bus name, and re-grep
+#    the boot journal for the warning itself.
 puts "\n--- DIAG: State.Host bus-name claimants ---"
-send "grep -rHE 'BusName=.*State\\.Host' /usr/lib/systemd/system/ /etc/systemd/system/ 2>/dev/null || echo NO_STATE_HOST_BUSNAME_UNITS\r"
-expect -re {\$ |# }
-send "ls /usr/share/dbus-1/system-services/ 2>/dev/null | grep -i State.Host || echo NO_STATE_HOST_DBUS_SVC\r"
-expect -re {\$ |# }
-send "journalctl -b --no-pager 2>/dev/null | grep -iE 'two services|same bus name' | head -5 || true\r"
-expect -re {\$ |# }
-send "systemctl --no-pager --failed 2>/dev/null | head -20\r"
-expect -re {\$ |# }
+diag "grep -rHE 'BusName=.*State.Host' /usr/lib/systemd/system/ /etc/systemd/system/ 2>/dev/null || echo NO_STATE_HOST_BUSNAME_UNITS"
+diag "ls /usr/share/dbus-1/system-services/ 2>/dev/null | grep -i State.Host || echo NO_STATE_HOST_DBUS_SVC"
+diag "journalctl -b --no-pager 2>/dev/null | grep -iE 'two services|same bus name' | head -5"
+diag "systemctl --no-pager --failed 2>/dev/null | head -20"
 
 # 8. SOFT DIAG: skeleton control-power should be GONE after the EM inventory flip.
 puts "\n--- DIAG: skeleton control-power (expected gone after EM flip) ---"
-send "busctl tree 2>/dev/null | grep -i '/org/openbmc/control/power' || echo NO_SKELETON_CONTROL_POWER\r"
-expect -re {\$ |# }
+diag "busctl tree 2>/dev/null | grep -i '/org/openbmc/control/power' || echo NO_SKELETON_CONTROL_POWER"
 
 # 9. SOFT DIAG: confirm the bmcweb StateDirectory line was stripped (no warning).
 puts "\n--- DIAG: bmcweb StateDirectory (should report no line) ---"
-send "systemctl cat bmcweb.service 2>/dev/null | grep -nE 'StateDirectory' || echo NO_STATEDIRECTORY_LINE\r"
-expect -re {\$ |# }
+diag "systemctl cat bmcweb.service 2>/dev/null | grep -nE 'StateDirectory' || echo NO_STATEDIRECTORY_LINE"
+
+# --- verdict ---
+if {$em_ok == 0}  { puts "\n*** entity-manager service not active ***"; exit 1 }
+if {$cfg_ok == 0} { puts "\n*** X10SDV-TLN4F.json not installed ***"; exit 1 }
 
 puts "\nSMOKE BOOT OK (userspace + D-Bus + entity-manager validated; board wiring NOT tested here)"
 send "\x01x"
