@@ -1,10 +1,20 @@
 #!/usr/bin/env expect
 # QEMU smoke boot for the X10SDV-TLN4F (ASPEED AST2400) OpenBMC image.
 #
-# Milestone 1: prove the image reaches userspace + D-Bus. Boots headless on the
-# closest in-tree QEMU AST2400 model (palmetto-bmc) -- our exact board is not a
-# QEMU machine, so peripherals we wired in the DTS simply won't probe; that is
-# expected and NOT what this checks. Real board wiring is validated on hardware.
+# Boots headless on the closest in-tree QEMU AST2400 model (palmetto-bmc) -- our
+# exact board is not a QEMU machine, so peripherals we wired in the DTS won't
+# probe; that is expected and NOT what this checks. Real board wiring is
+# validated on hardware.
+#
+# Milestone 2 adds entity-manager validation:
+#   HARD checks (fail the boot): reached userspace + D-Bus, EntityManager service
+#   active, and our X10SDV-TLN4F.json config installed.
+#   SOFT checks (logged, never fail): whether entity-manager actually
+#   *instantiated* an X10SDV board object. entity-manager probes on the FRU
+#   product name "X10SDV-TLN4F", but palmetto-bmc has no FRU EEPROM, so the
+#   config almost certainly won't instantiate under emulation. Real probe /
+#   instantiation is a bench-board check. We also dump diagnostics for the two
+#   M1 boot warnings (State.Host duplicate, bmcweb StateDirectory).
 #   usage: qemu-smoke.exp <path-to-image.static.mtd>
 set timeout 700
 set image [lindex $argv 0]
@@ -29,9 +39,7 @@ expect {
     timeout      { puts "\n*** no shell prompt after login ***"; exit 1 }
 }
 
-# 3. userspace sanity: os-release + D-Bus up
-send "grep PRETTY_NAME /etc/os-release\r"
-expect -re {\$ |# }
+# 3. userspace sanity: D-Bus up
 send "busctl --no-pager list >/dev/null 2>&1 && echo DBUS_OK || echo DBUS_FAIL\r"
 expect {
     "DBUS_FAIL" { puts "\n*** D-Bus not up ***"; exit 1 }
@@ -40,6 +48,55 @@ expect {
 }
 expect -re {\$ |# }
 
-puts "\nSMOKE BOOT OK (reached userspace + D-Bus; board wiring NOT tested here)"
+# 4. HARD: entity-manager service active (acceptance criterion 3)
+send "systemctl is-active xyz.openbmc_project.EntityManager.service >/dev/null 2>&1 && echo EM_ACTIVE || echo EM_INACTIVE\r"
+expect {
+    "EM_INACTIVE" { puts "\n*** entity-manager service not active ***"; exit 1 }
+    "EM_ACTIVE"   {}
+    timeout       { puts "\n*** entity-manager active check timed out ***"; exit 1 }
+}
+expect -re {\$ |# }
+
+# 5. HARD: our config installed (acceptance criterion 3)
+send "test -f /usr/share/entity-manager/configurations/X10SDV-TLN4F.json && echo CFG_PRESENT || echo CFG_MISSING\r"
+expect {
+    "CFG_MISSING" { puts "\n*** X10SDV-TLN4F.json not installed ***"; exit 1 }
+    "CFG_PRESENT" {}
+    timeout       { puts "\n*** config-present check timed out ***"; exit 1 }
+}
+expect -re {\$ |# }
+
+# 6. SOFT: did entity-manager instantiate an X10SDV board object? Expected ABSENT
+#    under palmetto-bmc (no FRU EEPROM to match the probe). Logged, never fatal.
+puts "\n--- DIAG: entity-manager board object (absence expected under QEMU, no FRU) ---"
+send "busctl tree xyz.openbmc_project.EntityManager 2>/dev/null | grep -i x10sdv || echo NO_X10SDV_OBJECT_UNDER_QEMU\r"
+expect -re {\$ |# }
+send "echo CONFIGS:; ls /usr/share/entity-manager/configurations/\r"
+expect -re {\$ |# }
+
+# 7. SOFT DIAG: chase the M1 'State.Host@0: Two services for same bus name'
+#    warning -- enumerate every unit file that claims a State.Host bus name so
+#    the boot log names the duplicate's two providers.
+puts "\n--- DIAG: State.Host bus-name claimants ---"
+send "grep -rHE 'BusName=.*State\\.Host' /usr/lib/systemd/system/ /etc/systemd/system/ 2>/dev/null || echo NO_STATE_HOST_BUSNAME_UNITS\r"
+expect -re {\$ |# }
+send "ls /usr/share/dbus-1/system-services/ 2>/dev/null | grep -i State.Host || echo NO_STATE_HOST_DBUS_SVC\r"
+expect -re {\$ |# }
+send "journalctl -b --no-pager 2>/dev/null | grep -iE 'two services|same bus name' | head -5 || true\r"
+expect -re {\$ |# }
+send "systemctl --no-pager --failed 2>/dev/null | head -20\r"
+expect -re {\$ |# }
+
+# 8. SOFT DIAG: skeleton control-power should be GONE after the EM inventory flip.
+puts "\n--- DIAG: skeleton control-power (expected gone after EM flip) ---"
+send "busctl tree 2>/dev/null | grep -i '/org/openbmc/control/power' || echo NO_SKELETON_CONTROL_POWER\r"
+expect -re {\$ |# }
+
+# 9. SOFT DIAG: confirm the bmcweb StateDirectory line was stripped (no warning).
+puts "\n--- DIAG: bmcweb StateDirectory (should report no line) ---"
+send "systemctl cat bmcweb.service 2>/dev/null | grep -nE 'StateDirectory' || echo NO_STATEDIRECTORY_LINE\r"
+expect -re {\$ |# }
+
+puts "\nSMOKE BOOT OK (userspace + D-Bus + entity-manager validated; board wiring NOT tested here)"
 send "\x01x"
 exit 0
